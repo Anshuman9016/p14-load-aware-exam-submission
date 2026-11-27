@@ -44,7 +44,7 @@ API tests against the live server (202, 200 duplicate, 401, 403, 404, 429):
 
 ![API tests](docs/screenshots/10-api-tests.jpg)
 
-All 20 screenshots (frontend, backend and every AWS service) are in [`docs/screenshots`](docs/screenshots).
+All screenshots (frontend, backend and every AWS service) are in [`docs/screenshots`](docs/screenshots), and as one captioned document in [`docs/P14-Project-Screenshots.pdf`](docs/P14-Project-Screenshots.pdf).
 
 ## REST API
 
