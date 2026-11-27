@@ -1,0 +1,7 @@
+node_modules/
+.env
+local-storage/
+worker/build/
+*.zip
+*.log
+.demo-db/
