@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exam Submission System - Login</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header><h1>Load-Aware Exam Submission <span>· P14</span></h1></header>
+  <main>
+    <div class="card login">
+      <div class="tabs">
+        <button id="tabLogin">Log in</button>
+        <button id="tabRegister" class="secondary">Register</button>
+      </div>
+
+      <form id="loginForm">
+        <label>Email</label><input name="email" type="email" required autocomplete="username">
+        <div style="height:10px"></div>
+        <label>Password</label><input name="password" type="password" required autocomplete="current-password">
+        <div style="height:14px"></div>
+        <button style="width:100%">Log in</button>
+      </form>
+
+      <form id="registerForm" class="hidden">
+        <label>Name</label><input name="name" required>
+        <div style="height:10px"></div>
+        <label>Email</label><input name="email" type="email" required>
+        <div style="height:10px"></div>
+        <label>Password (min 6 characters)</label><input name="password" type="password" minlength="6" required>
+        <div style="height:10px"></div>
+        <label>I am a</label>
+        <select name="role"><option value="student">Student</option><option value="teacher">Teacher</option></select>
+        <div style="height:14px"></div>
+        <button style="width:100%">Create account</button>
+      </form>
+
+      <div id="msg" class="msg hidden"></div>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+  <script>
+    const s = getSession();
+    if (s?.token) location.href = s.user.role === 'teacher' ? '/teacher.html' : '/student.html';
+
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    const msg = document.getElementById('msg');
+    const tabLogin = document.getElementById('tabLogin');
+    const tabRegister = document.getElementById('tabRegister');
+
+    function tab(which) {
+      loginForm.classList.toggle('hidden', which !== 'login');
+      registerForm.classList.toggle('hidden', which !== 'register');
+      tabLogin.className = which === 'login' ? '' : 'secondary';
+      tabRegister.className = which === 'register' ? '' : 'secondary';
+      msg.classList.add('hidden');
+    }
+    tabLogin.onclick = () => tab('login');
+    tabRegister.onclick = () => tab('register');
+
+    async function login(email, password) {
+      const r = await api('/auth/login', { method: 'POST', body: { email, password } });
+      if (!r.ok) return showMsg(msg, 'bad', r.data.error || 'Login failed');
+      setSession(r.data);
+      location.href = r.data.user.role === 'teacher' ? '/teacher.html' : '/student.html';
+    }
+
+    loginForm.onsubmit = (e) => {
+      e.preventDefault();
+      const f = new FormData(loginForm);
+      login(f.get('email'), f.get('password'));
+    };
+
+    registerForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const body = Object.fromEntries(new FormData(registerForm));
+      const r = await api('/auth/register', { method: 'POST', body });
+      if (!r.ok) return showMsg(msg, 'bad', r.data.error || 'Registration failed');
+      login(body.email, body.password);
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Teacher - Exam Submission System</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Load-Aware Exam Submission <span>· Teacher</span></h1>
+    <div><span id="who" class="muted"></span>&nbsp;&nbsp;<button class="secondary" onclick="logout()">Log out</button></div>
+  </header>
+  <main>
+    <div class="card">
+      <h2>System stats <span class="muted" style="font-weight:400">· live, refreshes every 3 s</span></h2>
+      <div class="grid" id="stats"><p class="muted">Loading…</p></div>
+      <div class="row" style="margin-top:14px" id="workerCtl"></div>
+    </div>
+
+    <div class="card">
+      <h2>Create an exam</h2>
+      <form id="examForm">
+        <div class="grid">
+          <div style="grid-column:1/-1"><label>Title</label><input name="title" required maxlength="200" placeholder="e.g. Cloud Computing - End Term"></div>
+          <div><label>Start time</label><input name="startTime" type="datetime-local" required></div>
+          <div><label>Deadline</label><input name="deadline" type="datetime-local" required></div>
+          <div><label>Max file size (MB)</label><input name="maxFileMb" type="number" min="1" max="50" value="10"></div>
+        </div>
+        <div style="height:14px"></div>
+        <button>Create exam</button>
+        <div id="examMsg" class="msg hidden"></div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>My exams</h2>
+      <div id="exams"><p class="muted">Loading…</p></div>
+    </div>
+
+    <div class="card hidden" id="subsCard">
+      <h2 id="subsTitle">Submissions</h2>
+      <div id="subs"></div>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+  <script>
+    const session = requireSession('teacher');
+    let openExamId = null;
+
+    // Default form times: start now, deadline in 2 hours (local time)
+    function localInput(d) { const z = new Date(d - d.getTimezoneOffset() * 60000); return z.toISOString().slice(0, 16); }
+    const f = document.getElementById('examForm');
+    f.startTime.value = localInput(new Date());
+    f.deadline.value = localInput(new Date(Date.now() + 2 * 3600 * 1000));
+
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(f);
+      const body = {
+        title: fd.get('title'),
+        startTime: new Date(fd.get('startTime')).toISOString(),
+        deadline: new Date(fd.get('deadline')).toISOString(),
+        maxFileMb: Number(fd.get('maxFileMb') || 10),
+      };
+      const r = await api('/exams', { method: 'POST', body });
+      const msg = document.getElementById('examMsg');
+      if (!r.ok) return showMsg(msg, 'bad', r.data.error);
+      showMsg(msg, 'ok', `Exam "${r.data.exam.title}" created (id ${r.data.exam.id}).`);
+      f.title.value = '';
+      loadExams();
+    };
+
+    async function loadExams() {
+      const r = await api('/exams');
+      const el = document.getElementById('exams');
+      if (!r.ok) return (el.innerHTML = `<p class="msg bad">${esc(r.data.error)}</p>`);
+      if (!r.data.exams.length) return (el.innerHTML = '<p class="muted">No exams yet - create one above.</p>');
+      el.innerHTML = `<table><tr><th>Exam</th><th>State</th><th>Deadline</th><th>Submissions</th><th></th></tr>
+        ${r.data.exams.map((e) => `<tr>
+          <td>${esc(e.title)} <span class="muted">#${e.id}</span></td><td>${badge(e.state)}</td>
+          <td>${fmt(e.deadline)}</td><td>${e.submissionCount}</td>
+          <td><button class="secondary" onclick="openExam(${e.id}, true)">View submissions</button></td></tr>`).join('')}
+      </table>`;
+    }
+
+    async function openExam(id, scroll) {
+      openExamId = id;
+      const r = await api(`/exams/${id}/submissions`);
+      const card = document.getElementById('subsCard');
+      card.classList.remove('hidden');
+      if (scroll) setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      if (!r.ok) return (document.getElementById('subs').innerHTML = `<p class="msg bad">${esc(r.data.error)}</p>`);
+      document.getElementById('subsTitle').textContent = `Submissions · ${r.data.exam.title}`;
+      document.getElementById('subs').innerHTML = !r.data.submissions.length
+        ? '<p class="muted">No submissions yet.</p>'
+        : `<table><tr><th>#</th><th>Student</th><th>File</th><th>Status</th><th>Received</th><th>Processed</th><th></th></tr>
+          ${r.data.submissions.map((s) => `<tr>
+            <td>${s.id}</td><td>${esc(s.student.name)}<br><span class="muted">${esc(s.student.email)}</span></td>
+            <td>${esc(s.fileName)}<br><span class="muted">${(s.sizeBytes / 1024).toFixed(1)} KB</span></td>
+            <td>${badge(s.status)}</td><td>${fmt(s.acceptedAt)}</td><td>${fmt(s.processedAt)}</td>
+            <td><button class="secondary" onclick="download(${s.id})">Download</button></td></tr>`).join('')}
+          </table>`;
+    }
+
+    async function download(id) {
+      const r = await api(`/submissions/${id}/download`);
+      if (!r.ok) return alert(r.data.error);
+      window.open(r.data.url, '_blank');
+    }
+
+    async function loadStats() {
+      const r = await api('/stats');
+      if (!r.ok) return;
+      const s = r.data;
+      document.getElementById('stats').innerHTML = [
+        ['Queue (waiting)', s.queue.waiting],
+        ['Being processed', s.queue.inFlight],
+        ['Load level', badge(s.queue.level)],
+        ['Accepted', s.api.accepted],
+        ['Rejected', `${s.api.rejected.total} <span class="muted">(${s.api.rejectedPercent}%)</span>`],
+        ['Avg submit time', `${s.api.avgResponseMs} ms`],
+        ['Processed', s.submissionsByStatus.processed],
+        ['Failed', s.submissionsByStatus.failed],
+      ].map(([k, v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+
+      const ctl = document.getElementById('workerCtl');
+      if (s.mode === 'local') {
+        const on = s.worker.running;
+        ctl.innerHTML = `<span class="muted">Worker: <b>${on ? 'running' : 'paused'}</b> (local mode)</span>
+          <button class="secondary" onclick="toggleWorker(${!on})">${on ? 'Pause worker (failure test)' : 'Resume worker'}</button>`;
+      } else {
+        ctl.innerHTML = `<span class="muted">Worker: AWS Lambda · mode: ${esc(s.mode)}</span>`;
+      }
+      if (openExamId) openExam(openExamId);
+    }
+
+    async function toggleWorker(running) {
+      await api('/stats/worker', { method: 'POST', body: { running } });
+      loadStats();
+    }
+
+    if (session) { loadExams(); loadStats(); setInterval(loadStats, 3000); }
+  </script>
+</body>
+</html>

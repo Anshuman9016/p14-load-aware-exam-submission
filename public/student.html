@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Student - Exam Submission System</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>Load-Aware Exam Submission <span>· Student</span></h1>
+    <div><span id="who" class="muted"></span>&nbsp;&nbsp;<button class="secondary" onclick="logout()">Log out</button></div>
+  </header>
+  <main>
+    <div class="card">
+      <h2>My exams</h2>
+      <div id="exams"><p class="muted">Loading…</p></div>
+    </div>
+  </main>
+  <script src="/app.js"></script>
+  <script>
+    const session = requireSession('student');
+    const examsEl = document.getElementById('exams');
+    const polling = {};
+
+    async function load() {
+      const r = await api('/exams');
+      if (!r.ok) { examsEl.innerHTML = `<p class="msg bad">${esc(r.data.error)}</p>`; return; }
+      if (!r.data.exams.length) { examsEl.innerHTML = '<p class="muted">No exams yet.</p>'; return; }
+      examsEl.innerHTML = r.data.exams.map(renderExam).join('');
+      r.data.exams.forEach((e) => {
+        if (e.mySubmission && e.mySubmission.status === 'queued') pollStatus(e.id, e.mySubmission.id);
+      });
+    }
+
+    function renderExam(e) {
+      let action = '';
+      if (e.mySubmission) {
+        action = `<p>Your submission #${e.mySubmission.id}: <span id="st-${e.id}">${badge(e.mySubmission.status)}</span>
+                  <span class="muted">· received ${fmt(e.mySubmission.acceptedAt)}</span></p>`;
+      } else if (e.state === 'open') {
+        action = `<form class="row" onsubmit="submitAnswer(event, ${e.id})">
+                    <div style="flex:1;min-width:220px"><label>Answer file (max ${e.maxFileMb} MB)</label>
+                    <input type="file" name="file" required></div>
+                    <button id="btn-${e.id}">Submit answer</button>
+                  </form>`;
+      } else if (e.state === 'upcoming') {
+        action = `<p class="muted">Opens at ${fmt(e.startTime)}</p>`;
+      } else {
+        action = `<p class="muted">Deadline has passed. You did not submit.</p>`;
+      }
+      return `<div class="exam">
+        <h3>${esc(e.title)} ${badge(e.state)}</h3>
+        <p class="muted">Teacher: ${esc(e.teacherName)} · Start ${fmt(e.startTime)} · Deadline <b>${fmt(e.deadline)}</b></p>
+        ${action}
+        <div id="msg-${e.id}" class="msg hidden"></div>
+      </div>`;
+    }
+
+    async function submitAnswer(ev, examId, attempt = 1) {
+      if (ev) ev.preventDefault();
+      const form = ev ? ev.target : document.querySelector(`#btn-${examId}`).form;
+      const btn = document.getElementById(`btn-${examId}`);
+      const msg = document.getElementById(`msg-${examId}`);
+      const fd = new FormData(form);
+      btn.disabled = true;
+      showMsg(msg, 'warn', 'Uploading…');
+
+      const r = await api(`/exams/${examId}/submit`, { method: 'POST', form: fd });
+
+      if (r.status === 202 || r.status === 200) {
+        showMsg(msg, 'ok', `${r.data.message}! Submission #${r.data.submissionId} accepted at ${fmt(r.data.acceptedAt)}. It counts as on time.`);
+        setTimeout(load, 1200);
+        return;
+      }
+      if (r.status === 503) {
+        // System busy: wait and retry automatically (SRS 10.3)
+        let wait = r.data.retryAfter || 15;
+        const timer = setInterval(() => {
+          showMsg(msg, 'warn', `The system is very busy right now. Retrying automatically in ${wait}s… (attempt ${attempt})`);
+          if (--wait < 0) { clearInterval(timer); submitAnswer(null, examId, attempt + 1); }
+        }, 1000);
+        return;
+      }
+      btn.disabled = false;
+      showMsg(msg, r.status === 429 ? 'warn' : 'bad', r.data.error || 'Something went wrong, please try again');
+    }
+
+    function pollStatus(examId, submissionId) {
+      if (polling[submissionId]) return;
+      polling[submissionId] = setInterval(async () => {
+        const r = await api(`/submissions/${submissionId}`);
+        if (!r.ok) return;
+        const el = document.getElementById(`st-${examId}`);
+        if (el) el.innerHTML = badge(r.data.status);
+        if (r.data.status !== 'queued') { clearInterval(polling[submissionId]); delete polling[submissionId]; }
+      }, 2000);
+    }
+
+    if (session) load();
+  </script>
+</body>
+</html>
